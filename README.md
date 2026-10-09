@@ -47,8 +47,10 @@ cp -r jujutsu/ ~/.claude/skills/jujutsu/
 
 ```
 jujutsu/
-└── SKILL.md    # Main skill file with jj workflow instructions
+└── SKILL.md    # Agent workflow, command reference, and task-specific caveats
 ```
+
+Use the command reference for basic operations; read the task-specific sections for refinement, recovery, workspaces, and remote operations.
 
 ## Key Workflow Philosophy
 
@@ -63,7 +65,7 @@ The skill emphasizes:
 
 ## Contributing
 
-Contributions are welcome. Please ensure any changes are compatible with jj v0.46.0.
+Keep changes compatible with the target version. Give each agent rule one authoritative section; retain safe flags in command examples and use links instead of repeating prose.
 
 ## License
 
