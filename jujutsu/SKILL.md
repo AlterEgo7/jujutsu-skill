@@ -8,7 +8,7 @@ allowed-tools: Bash(jj *)
 
 This skill helps you work with Jujutsu, a Git-compatible VCS with mutable commits and automatic rebasing.
 
-**Tested with jj v0.37.0** - Commands may differ in other versions.
+**Targets jj v0.46.0** - Commands may differ in other versions.
 
 ## Important: Automated/Agent Environment
 
@@ -246,21 +246,29 @@ jj bookmark delete my-feature
 
 A **workspace** is a working copy plus its associated repo. One repo can have multiple workspaces — each with its own working directory and working-copy commit (`@`) — all sharing the same commits, operations, and bookmarks. This is jj's equivalent of `git worktree`.
 
-Useful for running a long build or test in one workspace while editing in another. Workspaces are a rarely-needed feature; consult the [official docs](https://docs.jj-vcs.dev/latest/working-copy/#workspaces) for anything beyond the basics below.
+Useful for running a long build or test in one workspace while editing in another. Workspaces are a rarely-needed feature; consult the [official docs](https://docs.jj-vcs.dev/v0.46.0/working-copy/#workspaces) for anything beyond the basics below.
 
 ### Common commands
 
 ```bash
 # Create a new workspace (defaults: name = basename of path, parent = current @'s parent)
 jj workspace add ../my-tests
-jj workspace add --name tests -r <change-id> ../my-tests   # explicit name and base
+jj workspace add --name tests --no-colocate -r <change-id> ../my-tests   # jj-only, explicit name and base
+jj workspace add --colocate ../git-tests   # create a corresponding Git worktree
 
 # Inspect
 jj --no-pager workspace list
-jj workspace root [--name <ws>]
+jj --no-pager workspace list -T 'name ++ "\t" ++ root ++ "\n"'   # names and recorded roots
+jj workspace root                         # current workspace
+jj workspace root --name tests            # named workspace
 
-# Remove (does NOT delete files on disk — rm the directory separately)
-jj workspace forget [<ws>]
+# Inspect or toggle Git colocation for the current workspace
+jj --no-pager git colocation status
+jj git colocation enable
+jj git colocation disable
+
+# Remove a named workspace and its directory (run from another workspace)
+jj workspace remove <name>
 
 # Rename current workspace
 jj workspace rename <new-name>
@@ -268,9 +276,22 @@ jj workspace rename <new-name>
 
 In `jj log`, each workspace's `@` appears as `<workspace-name>@`.
 
+### Removing workspaces
+
+When asked to remove a workspace, use `jj workspace remove <name>` so its directory is deleted too. Run it from another workspace in the same repo. The main workspace cannot be removed.
+
+Before removal, inspect `jj --no-pager workspace list` and `jj workspace root --name <name>` to confirm the target and record its path. Stop processes using that workspace and preserve any ignored files you need: tracked changes are snapshotted into a commit before removal, but ignored files are deleted without being saved.
+
+After removal, verify that the workspace is no longer listed and its recorded directory is gone. Do not substitute `jj workspace forget` plus manual directory deletion.
+
+Use `jj workspace forget <name>` only when explicitly keeping the directory or clearing registration for a missing/inaccessible workspace. It leaves the workspace directory on disk; for a colocated workspace, it also unregisters the corresponding Git worktree.
+
 ### Key semantics
 
 - **Isolation by default.** `jj workspace add` gives the new workspace its own fresh empty commit; workspaces don't start out sharing `@`, and on-disk files are never live-mirrored between them.
+- **Colocation.** `workspace add` creates a Git worktree by default only when the current workspace is colocated and `git.colocate` is `true`. Use `--colocate` or `--no-colocate` to choose explicitly. Git 2.42.0 or newer is required. `git colocation status` includes the workspace name; `enable`/`disable` also work in child workspaces, creating/removing their Git worktree.
+- **Recorded roots.** `workspace list` and `root` show recorded paths even when unreachable; `root` emits a warning. A displayed path does not prove the directory exists. Workspaces created before jj 0.38.0 may lack a recorded root.
+- **List template labels.** Color rules for workspace fields use labels such as `workspace name` and `workspace root`.
 - **Propagation at command boundaries.** Each jj command snapshots the current workspace's files and reads the op log, so it sees commits/bookmarks made by other workspaces. There is no filesystem watcher.
 - **Stale working copy.** If another workspace rewrites this workspace's `@` (e.g. via `jj squash`, `rebase`, `abandon`), jj refuses commands here until you run `jj workspace update-stale`. Same recovery path if a command was interrupted mid-update.
 - **Shared `@` is sharp-edged.** `jj edit <id>` lets two workspaces point at the same change without warning. When one mutates it, the other goes stale; if the stale one had un-snapshotted edits, `update-stale` preserves them as a **divergent commit** (same change ID, shown as `xyz??` in `jj log`) that you must resolve. Avoid sharing `@` unless both workspaces are read-only.
@@ -279,7 +300,7 @@ In `jj log`, each workspace's `@` appears as `<workspace-name>@`.
 
 - Always pass `--no-pager` to `jj workspace list`.
 - Don't `jj edit` a change another workspace already has as its `@` — main cause of accidental divergence.
-- Don't `rm -rf` a workspace directory without also running `jj workspace forget <name>`.
+- `jj undo` and `jj redo` refuse operations performed in another workspace by default. Run them in the originating workspace, or use `--allow-cross-workspace` only when intentionally undoing/redoing another workspace's operation.
 
 ## Git Integration
 
@@ -413,7 +434,7 @@ jj st
 | Push bookmark | `jj git push -b <name>` |
 | Add workspace | `jj workspace add <path>` |
 | List workspaces | `jj --no-pager workspace list` |
-| Forget workspace | `jj workspace forget [name]` |
+| Remove workspace and directory | `jj workspace remove <name>` |
 | Fix stale working copy | `jj workspace update-stale` |
 
 ## Best Practices Summary

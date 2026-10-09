@@ -8,9 +8,9 @@ This repository provides an Agent Skill for Claude Code and other compatible AI 
 
 ## Compatibility
 
-**Tested with:** jj v0.37.0
+**Target version:** jj v0.46.0
 
-This skill is designed for jj v0.37.0 and may work with other versions, though compatibility is not guaranteed.
+Workspace management requires jj v0.46.0 or newer, including `jj workspace remove` to delete a workspace and its directory. jj v0.46.0 requires Git 2.42.0 or newer. Commands may differ in other versions.
 
 ## What is Jujutsu?
 
@@ -61,7 +61,7 @@ The skill emphasizes:
 
 ## Contributing
 
-Contributions are welcome. Please ensure any changes are compatible with jj v0.37.0.
+Contributions are welcome. Please ensure any changes are compatible with jj v0.46.0.
 
 ## License
 
