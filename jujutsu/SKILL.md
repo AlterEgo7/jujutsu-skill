@@ -12,40 +12,52 @@ This skill helps you work with Jujutsu, a Git-compatible VCS with mutable commit
 
 ## Important: Automated/Agent Environment
 
-When running as an agent:
+Use canonical command names such as `status`, `describe`, and `operation`: built-in aliases can be disabled by configuration.
 
-1. **Always use `--no-pager`** to prevent commands from opening an interactive pager (like `less`), which will hang the agent:
-
-```bash
-# Always use --no-pager on commands that produce output
-jj --no-pager log          # NOT: jj log
-jj --no-pager diff         # NOT: jj diff
-jj --no-pager show <id>    # NOT: jj show <id>
-```
-
-2. **Always use `-m` flags** to provide messages inline rather than relying on editor prompts:
+1. **Disable the pager** on commands that produce output:
 
 ```bash
-# Always use -m to avoid editor prompts
-jj desc -m "message"      # NOT: jj desc
-jj squash -m "message"    # NOT: jj squash (which opens editor)
+jj --no-pager log
+jj --no-pager diff --git
+jj --no-pager show <change-id>
 ```
 
-Editor-based commands will fail in non-interactive environments.
+2. **Supply descriptions with `-m`** instead of opening an editor:
 
-3. **Verify operations with `jj st`** after mutations (`squash`, `abandon`, `rebase`, `restore`) to confirm the operation succeeded.
+```bash
+jj describe -m "message"
+jj squash -m "Combined description"
+```
+
+`--no-pager` does not disable editors or interactive UIs. Use the non-interactive split and convergence workflows below; reserve editor-based commands for interactive use.
+
+3. **Verify the changed state**, not just the exit code. After mutations, inspect `jj --no-pager status` and the relevant history or operation diff. Successful commands can be no-ops.
+
+4. **For passive/background inspection**, read recorded state without snapshotting current files:
+
+```bash
+jj --no-pager --at-op=@ --ignore-working-copy log
+```
+
+This deliberately omits unsnapshotted edits. Use ordinary commands for reviewing current on-disk changes. `--no-integrate-operation` still creates operations and permits external effects, including pushes; it is not a dry-run.
+
+### Configuration
+
+Repo/workspace configuration lives outside the repository. Discover its location with `jj config path --repo` or `--workspace`; use `jj config set`/`unset` for requested non-interactive changes rather than `config edit`.
+
+To modify a specific loaded configuration file, use `jj config set --file <path> <key> <value>` (or `unset --file`). `--user` targets the first loaded user file, which later files can override. Global `--config-file` loads additional settings for an invocation; it does not select a file to modify. Consult the [configuration docs](https://docs.jj-vcs.dev/v0.46.0/config/) for locations and precedence.
 
 ## Core Concepts
 
 ### The Working Copy is a Commit
 
-In jj, your working directory is always a commit (referenced as `@`). Changes are automatically snapshotted when you run any jj command. There is no staging area.
+In jj, your working directory is always a commit (referenced as `@`). Most jj commands automatically snapshot on-disk changes unless snapshotting is explicitly disabled. There is no staging area.
 
 There is no need to run `jj commit` to finalize changes — the working copy is always a commit. Use `jj commit <paths>` only to commit a subset of files while keeping the rest in the working copy (see "Splitting Commits").
 
 ### Commits Are Mutable
 
-**CRITICAL**: Unlike git, jj commits can be freely modified after creation. You can update descriptions, squash changes, rebase, and absorb — all without creating new commits. See "Essential Workflow" below for the recommended working pattern.
+Mutable commits can be described, squashed, rebased, and absorbed after creation. By default, trunk, local tag targets, untracked remote bookmark/tag targets, and their ancestors are immutable. Inspect the [immutability rules](https://docs.jj-vcs.dev/v0.46.0/config/#set-of-immutable-commits) when an edit is rejected; use `--ignore-immutable` only when rewriting protected history is explicitly intended.
 
 ### Change IDs vs Commit IDs
 
@@ -62,8 +74,10 @@ jj uses a revset language to select commits in commands. Common revsets:
 - `@::` — all descendants of `@`
 - `trunk()..@` — commits between trunk and `@` (your branch)
 - `bookmarks()` — all commits with bookmarks
+- `divergent()` — visible commits with multiple versions of the same change
+- `change_id(<id>)` — all visible versions of a change, including divergent versions
 
-Use revsets with `-r` flags: `jj log -r 'trunk()..@'`
+Use revsets with `-r` flags: `jj --no-pager log -r 'trunk()..@'`
 
 ## Essential Workflow
 
@@ -71,7 +85,7 @@ Use revsets with `-r` flags: `jj log -r 'trunk()..@'`
 
 **Always create your commit message before writing code:**
 
-Validate that you're on a blank revision with `jj st`. If you are not, you should type:
+Validate that you're on a blank revision with `jj --no-pager status`. If you are not, create one:
 
 ```bash
 jj new
@@ -79,13 +93,13 @@ jj new
 
 ```bash
 # First, describe what you intend to do
-jj desc -m "Add user authentication to login endpoint"
+jj describe -m "Add user authentication to login endpoint"
 
 # Then make your changes - they automatically become part of this commit
 # ... edit files ...
 
 # Check status
-jj st
+jj --no-pager status
 ```
 
 ### Creating Atomic Commits
@@ -112,11 +126,14 @@ jj --no-pager log -p
 # View specific commit
 jj --no-pager show <change-id>
 
+# Review each revision's patch oldest first
+jj --no-pager show --git --reversed -r 'trunk()..@'
+
 # View diff of working copy (use --git for familiar +/- format)
 jj --no-pager diff --git
 ```
 
-**IMPORTANT: `jj diff` output format**: The default `jj diff` output uses a side-by-side line number format (e.g. `26   26:`) that looks very different from git's `+`/`-` prefix format. This is **normal and correct** — it is NOT corrupted or showing stale content. However, to avoid confusion, **always use `jj diff --git`** to get standard unified diff format with `+`/`-` lines.
+Use `jj diff --git` for standard unified diffs with `+`/`-` lines. Other configured diff formats can look different without indicating corruption. `show -r <revset>` displays individual patches; `diff -r <revset>` aggregates the selected changes. For content-history searches, consult the [revset functions](https://docs.jj-vcs.dev/v0.46.0/revsets/#functions) and [historical file search](https://docs.jj-vcs.dev/v0.46.0/cli-reference/#jj-file-search).
 
 ### Moving Between Commits
 
@@ -141,28 +158,33 @@ jj next -e
 
 ### Squashing Changes
 
-Move changes from current commit into its parent:
+Move changes from the current commit into its parent with an explicit combined description:
 
 ```bash
-# Squash all changes into parent
-jj squash
+jj squash -m "Combined description"
 ```
 
-**Note**: `jj squash -i` opens an interactive UI and will hang in agent environments. Avoid it.
+Use `jj squash --use-destination-message` only when deliberately retaining the destination description and discarding source descriptions. Bare `jj squash` can open an editor when both descriptions are nonempty. `-i`, `--tool`, and `--editor` require interactive tooling.
 
 ### Splitting Commits
 
-**Warning**: `jj split` is interactive — it launches a diff editor and asks for commit descriptions — and will hang in agent environments. Avoid it.
-
-To commit only some files while leaving the rest in the working copy, commit the given paths directly:
+For a non-interactive whole-file split, provide both filesets and `-m`. This works on the working-copy revision or an existing ancestor:
 
 ```bash
-jj commit -m "type(scope): description" path/to/file1 path/to/file2
+jj split -r @- -m "Extract validation" path/to/file1 path/to/file2
 ```
 
-Only the given paths go into the new commit; all other working copy changes stay uncommitted.
+Without placement flags, selected changes stay in the original change and remaining changes become a new child. The selected part receives the supplied description; the other part keeps its original description. Bare `jj split` opens interactive tooling; avoid `-i`, `--tool`, and `--editor` in agent workflows.
 
-**Warning**: `jj restore <paths>` discards the changes to the given paths — it does not move them into another commit. Use `jj commit <paths>` instead when you want to keep those changes.
+For selected files from the working copy, `jj commit` is a convenient alternative:
+
+```bash
+jj commit -m "Extract validation" path/to/file1 path/to/file2
+```
+
+Only the given paths go into the described commit; other changes remain in a new working-copy commit.
+
+`jj restore <paths>` discards changes to those paths; it does not move them into another commit. Use `split` or `commit` when preserving both parts.
 
 ### Absorbing Changes
 
@@ -183,38 +205,47 @@ jj abandon <change-id>
 
 ### Undoing Operations
 
-Reverse the last jj operation:
+Undo acts on the last recorded operation, not necessarily the previous shell command. Inspect the operation log before recovery; it identifies the originating workspace:
 
 ```bash
-jj undo
+jj --no-pager --at-op=@ --ignore-working-copy operation log --limit 10
 ```
 
-This reverts the repository to its state before the previous command. Useful for recovering from mistakes like accidental `abandon`, `squash`, or `rebase`.
+- `jj undo` reverses the latest operation; repeated calls walk backward.
+- `jj redo` walks forward through undone operations.
+- `jj operation revert <operation-id>` reverses a selected earlier operation rather than restoring the entire repository to that point.
+- `jj revert` creates inverse commit changes; use it when reverting published changes instead of undoing repository operations or rewriting protected history.
+
+`undo`/`redo` refuse operations from another workspace by default. Run them in the originating workspace; use `--allow-cross-workspace` only for intentional cross-workspace recovery. These commands do not reverse external effects such as a remote push.
+
+Operation diffs can filter revisions. For a full audit, use `jj --no-pager operation show <operation-id> --show-changes-in 'all()' --git`. Consult the [operation-log docs](https://docs.jj-vcs.dev/v0.46.0/operation-log/) for targeted recovery and restoration.
 
 ### Rebasing Commits
 
-Move commits to a different parent:
+Move commits to different parents while preserving their changes:
 
 ```bash
-# Rebase current branch onto a destination
-jj rebase -d <destination>
+# Rebase the current branch
+jj rebase --onto <destination>
 
-# Rebase a specific revision (without descendants) onto a destination
-jj rebase -r <change-id> -d <destination>
+# Move only the selected revision
+jj rebase -r <change-id> --onto <destination>
 
-# Rebase a revision and all its descendants
-jj rebase -s <change-id> -d <destination>
+# Move a revision and all its descendants
+jj rebase -s <change-id> --onto <destination>
 
-# Rebase onto trunk (common: update your branch to latest main)
-jj rebase -d main
+# Move the current branch onto the configured trunk
+jj rebase --onto 'trunk()'
 ```
+
+`-r` excludes descendants from the move, but they can still be rewritten onto the selected revision's former parents. Inspect the resulting graph, especially when moving ancestor commits.
 
 ### Restoring Files
 
 Discard changes to specific files or restore files from another revision:
 
 ```bash
-# Discard all uncommitted changes in working copy (restore from parent)
+# Discard working-copy changes relative to the parent
 jj restore
 
 # Discard changes to specific files
@@ -226,7 +257,7 @@ jj restore --from <change-id> path/to/file.txt
 
 ## Working with Bookmarks (Branches)
 
-Bookmarks are jj's equivalent to git branches:
+Bookmarks are jj's equivalent to git branches. They follow rewrites of their target, but do not automatically advance when you create new commits.
 
 ```bash
 # Create a bookmark at current commit
@@ -235,12 +266,27 @@ jj bookmark create my-feature -r@
 # Move bookmark to a different commit
 jj bookmark move my-feature --to <change-id>
 
+# Advance a named ancestor bookmark to the chosen descendant
+jj bookmark advance exact:my-feature --to @
+
 # List bookmarks
 jj --no-pager bookmark list
 
 # Delete a bookmark
 jj bookmark delete my-feature
 ```
+
+Use `--to @-` instead when the finished revision is the parent of an empty working-copy commit. Bare `bookmark advance` uses configurable selection and target revsets and can move multiple closest bookmarks; name the intended bookmark and target explicitly. Keep `bookmark move` for intentional backward or sideways moves.
+
+Local bookmarks follow remote updates only when the corresponding remote bookmarks are tracked. Track or untrack a specific name and remote:
+
+```bash
+jj --no-pager bookmark list --all-remotes
+jj bookmark track exact:my-feature --remote exact:origin
+jj bookmark untrack exact:my-feature --remote exact:origin
+```
+
+Untracking keeps the local bookmark but stops future fetched updates from propagating into it. Separate name/remote patterns scope the operation; literal `my-feature@origin` symbols also remain supported. Consult the [bookmark tracking docs](https://docs.jj-vcs.dev/v0.46.0/bookmarks/#remotes-and-tracked-bookmarks) for other policies.
 
 ## Workspaces
 
@@ -292,15 +338,15 @@ Use `jj workspace forget <name>` only when explicitly keeping the directory or c
 - **Colocation.** `workspace add` creates a Git worktree by default only when the current workspace is colocated and `git.colocate` is `true`. Use `--colocate` or `--no-colocate` to choose explicitly. Git 2.42.0 or newer is required. `git colocation status` includes the workspace name; `enable`/`disable` also work in child workspaces, creating/removing their Git worktree.
 - **Recorded roots.** `workspace list` and `root` show recorded paths even when unreachable; `root` emits a warning. A displayed path does not prove the directory exists. Workspaces created before jj 0.38.0 may lack a recorded root.
 - **List template labels.** Color rules for workspace fields use labels such as `workspace name` and `workspace root`.
-- **Propagation at command boundaries.** Each jj command snapshots the current workspace's files and reads the op log, so it sees commits/bookmarks made by other workspaces. There is no filesystem watcher.
+- **Propagation at command boundaries.** Ordinary jj commands snapshot the current workspace's files and read the op log, so they see commits/bookmarks made by other workspaces. Passive inspection can skip snapshotting as described above. There is no filesystem watcher.
 - **Stale working copy.** If another workspace rewrites this workspace's `@` (e.g. via `jj squash`, `rebase`, `abandon`), jj refuses commands here until you run `jj workspace update-stale`. Same recovery path if a command was interrupted mid-update.
-- **Shared `@` is sharp-edged.** `jj edit <id>` lets two workspaces point at the same change without warning. When one mutates it, the other goes stale; if the stale one had un-snapshotted edits, `update-stale` preserves them as a **divergent commit** (same change ID, shown as `xyz??` in `jj log`) that you must resolve. Avoid sharing `@` unless both workspaces are read-only.
+- **Shared `@` is sharp-edged.** `jj edit <id>` lets two workspaces point at the same change without warning. When one mutates it, the other goes stale; if the stale one had unsnapshotted edits, `update-stale` preserves them as a **divergent commit** with the same change ID. Use [divergence recovery](#resolving-divergence) below. Avoid sharing `@` unless both workspaces are read-only.
 
 ### Agent guidance
 
 - Always pass `--no-pager` to `jj workspace list`.
 - Don't `jj edit` a change another workspace already has as its `@` — main cause of accidental divergence.
-- `jj undo` and `jj redo` refuse operations performed in another workspace by default. Run them in the originating workspace, or use `--allow-cross-workspace` only when intentionally undoing/redoing another workspace's operation.
+- For undo/redo or targeted recovery, follow [Undoing Operations](#undoing-operations) and identify the originating workspace first.
 
 ## Git Integration
 
@@ -316,18 +362,21 @@ jj git init --colocate
 
 ### Fetching Remote Changes
 
+Fetch configured bookmarks and tags from configured/default remote(s):
+
 ```bash
-# Fetch all branches from the default remote
 jj git fetch
 
-# Fetch from a specific remote
-jj git fetch --remote <remote-name>
-
-# Fetch specific branches
-jj git fetch -b <branch-name>
+# Fetch a specific bookmark from an explicit remote
+jj git fetch --remote exact:origin --branch exact:main
+jj --no-pager bookmark list --all-remotes exact:main
 ```
 
-After fetching, rebase your work onto the updated trunk: `jj rebase -d main`
+`git.fetch` selects default remotes; `remotes.<name>.fetch-bookmarks` and `fetch-tags` control default targets. A successful fetch does not prove that every branch was fetched or that a same-named local bookmark moved; see bookmark tracking above.
+
+Fetched tags are tracked by same-named local tags by default. Untracking a tag does not stop fetching it or delete it. To disable tag fetching intentionally, use `remotes.<name>.fetch-tags = '~*'` in jj config, not Git's `tagOpt`. See the [fetch configuration](https://docs.jj-vcs.dev/v0.46.0/config/#default-bookmarks-and-tags-to-fetch).
+
+Fetch can recognize rewritten remote commits when their change IDs survive, hide obsolete versions, and rebase mutable local descendants onto successors. Inspect `jj --no-pager log -r 'trunk()..@'` and status afterward. If the branch still needs moving onto updated trunk, use `jj rebase --onto 'trunk()'`; an additional rebase is not always necessary.
 
 ### Switching Between jj and git (Colocated Repos Only)
 
@@ -338,7 +387,7 @@ In a colocated repository, you can use both jj and git commands with care:
 **Switching to git mode** (e.g., for merge workflows):
 ```bash
 # First, ensure your jj working copy is clean
-jj st
+jj --no-pager status
 
 # Then checkout a branch with git
 git checkout <branch-name>
@@ -357,40 +406,23 @@ jj edit <change-id>
 
 ### Pushing Changes
 
-When the user asks you to push changes:
+Push only when the user explicitly requests it, with the intended bookmark and remote selected.
+
+1. Inspect `jj --no-pager bookmark list --all-remotes exact:my-feature` and choose the finished target revision. If `@` is an empty working-copy child, the finished target may be `@-`.
+2. Move an existing bookmark with `jj bookmark move exact:my-feature --to <change-id>`, or create a missing one with `jj bookmark create my-feature -r <change-id>`.
+3. Review the target's content and description; keep commits atomic.
+4. Preview the remote changes, then execute the authorized push:
 
 ```bash
-# Push a specific bookmark to the remote
-jj git push -b <bookmark-name>
-
-# Example: push the main bookmark
-jj git push -b main
+jj --no-pager git push --dry-run --remote exact:origin --bookmark exact:my-feature
+jj git push --remote exact:origin --bookmark exact:my-feature
 ```
 
-**Before pushing, ensure:**
-1. Your bookmark points to the correct commit (bookmarks don't auto-advance like git branches)
-2. The commits are refined and atomic
-3. The user has explicitly requested the push
+Explicitly pushing a bookmark that tracks no remote automatically tracks it. If it already tracks another remote, creating it on a new endpoint requires intentional tracking there first, e.g. `jj bookmark track my-feature@backup`. `exact:` selects a literal name; unqualified selectors use glob patterns.
 
-**IMPORTANT**: Unlike git branches, jj bookmarks do not automatically move when you create new commits. You must manually update them before pushing:
+Plain push can include tracked tags in its default revision set. `--all`, `--tracked`, and `-r` can select tags as well as bookmarks; preserve explicit bookmark scoping for ordinary agent pushes. Broad pushes can skip references with private or conflicted commits, so inspect the output rather than assuming every selected reference was pushed.
 
-```bash
-# Move an existing bookmark to the current commit
-jj bookmark move my-feature --to @
-
-# Then push it
-jj git push -b my-feature
-```
-
-If no bookmark exists for your changes, create one first:
-
-```bash
-# Create a bookmark at the current commit
-jj bookmark create my-feature
-
-# Then push it
-jj git push -b my-feature
-```
+`git.push` can select multiple remotes through patterns or arrays, and `--remote` is repeatable. `revsets.git-push` can change the default revision selection. Select one explicit remote for the ordinary workflow; choose multiple endpoints only intentionally. Consult the [push reference](https://docs.jj-vcs.dev/v0.46.0/cli-reference/#jj-git-push) for tag publication and specialized overrides.
 
 ## Handling Conflicts
 
@@ -398,10 +430,27 @@ jj allows committing conflicts — you can resolve them later:
 
 ```bash
 # View conflicts
-jj st
+jj --no-pager status
 ```
 
-**Agent conflict resolution**: Do not use `jj resolve` (interactive). Instead, edit the conflicted files directly to remove conflict markers, then run `jj st` to verify resolution.
+**Agent conflict resolution**: Edit conflicted files directly to replace conflict markers with resolved content, then run `jj --no-pager status` to verify resolution. Reserve `jj resolve` for configured non-interactive merge tools or interactive use.
+
+### Resolving Divergence
+
+Divergence means multiple visible versions of one change, not necessarily a file conflict. Inspect the versions first; if combining them is intended, use scoped, non-interactive convergence:
+
+```bash
+jj --no-pager log -r 'divergent()'
+jj --no-pager show --git -r 'change_id(<change-id>)'
+jj converge --no-interactive -r 'change_id(<change-id>)'
+jj --no-pager operation show -p --git
+jj --no-pager log -r 'change_id(<change-id>)'
+jj --no-pager status
+```
+
+Replace `<change-id>` with an unambiguous prefix from the log. A bare divergent change ID is ambiguous; `change_id(...)` selects all visible versions, while an offset such as `<id>/0` selects only one.
+
+Convergence can rebase descendants, move local bookmarks, and introduce file conflicts. Review the resulting versions and content, not just the exit code. If heuristics require a decision, `--no-interactive` fails rather than prompting; choose an explicit recovery using the [divergence guide](https://docs.jj-vcs.dev/v0.46.0/guides/divergence/) instead of retrying interactively. Abandon a version by commit ID only after establishing it is unwanted.
 
 ## Preserving Commit Quality
 
@@ -410,28 +459,57 @@ jj st
 1. **Review your commit**: `jj --no-pager show @` or `jj --no-pager diff --git`
 2. **Is it atomic?** One logical change per commit
 3. **Is the message clear?** Use imperative verb phrase in sentence case format with no full stop: e.g. "Add login endpoint", "Fix null pointer in payment processor", "Remove deprecated API endpoints"
-4. **Are there unrelated changes?** Use `jj commit <paths>` to commit the related files and keep the rest in the working copy
-5. **Should changes be elsewhere?** Use `jj squash` or `jj absorb`
+4. **Are there unrelated changes?** Use `jj commit -m "Selected change" <paths>` for working-copy files or the non-interactive split workflow for existing revisions
+5. **Should changes be elsewhere?** Use the squashing workflow above or `jj absorb`
+
+### Running Checks Across a Stack
+
+`jj run` executes a command in isolated per-revision working copies. By default, successful file edits rewrite the selected revisions and descendants are rebased.
+
+For checks, use an explicit revset, `--ignore-changes` to discard command edits, and `--root` to run from each checkout's root. In 0.46, sparse patterns are inherited from the current workspace; use `--sparse-patterns full` when the check needs the entire tree.
+
+```bash
+# Cargo example; substitute the project's existing non-interactive check command
+jj --no-pager run -r 'trunk()..@' --root --ignore-changes --sparse-patterns full -- cargo test
+```
+
+For intentional transforms, omit `--ignore-changes` and review `jj --no-pager operation show -p --git` plus status afterward. Keep normal failure handling for verification: `--ignore-errors` continues after failures and does not make them affect the exit code of `jj run`. See the [run reference](https://docs.jj-vcs.dev/v0.46.0/cli-reference/#jj-run) for concurrency, reused working copies, and clean runs.
+
+### Specialized Workflows
+
+Use version-pinned references when the task needs these less-common branches:
+
+- [Tag management](https://docs.jj-vcs.dev/v0.46.0/cli-reference/#jj-tag) for tag lifecycle, tracking, or explicitly requested publication.
+- [File editing](https://docs.jj-vcs.dev/v0.46.0/cli-reference/#jj-file-edit) and [deletion](https://docs.jj-vcs.dev/v0.46.0/cli-reference/#jj-file-delete) for changing files in another revision without switching `@`; `file edit` opens an editor.
+- [Bisect](https://docs.jj-vcs.dev/v0.46.0/cli-reference/#jj-bisect-run) for fault localization: use a dedicated workspace and retain endpoint checks.
+- [Fix configuration](https://docs.jj-vcs.dev/v0.46.0/config/#enforce-code-formatting-on-modified-lines) for configured per-file transforms; current line-range arguments use the `line-range-args` array.
 
 ## Quick Reference
 
 | Action | Command |
 |--------|---------|
-| Describe commit | `jj desc -m "message"` |
-| View status | `jj st` |
+| Describe commit | `jj describe -m "message"` |
+| View status | `jj --no-pager status` |
 | View log | `jj --no-pager log` |
 | View diff | `jj --no-pager diff --git` |
-| New commit | `jj new -m "message"` (use `jj st` first; skip if `@` is empty) |
+| Review stack oldest first | `jj --no-pager show --git --reversed -r 'trunk()..@'` |
+| New commit | `jj new -m "message"` (check status first; skip if `@` is empty) |
 | Edit commit | `jj edit <id>` |
-| Squash to parent | `jj squash` |
+| Squash to parent | `jj squash -m "Combined description"` |
+| Split selected files | `jj split -r <id> -m "Selected change" <paths>` |
 | Auto-distribute | `jj absorb` |
-| Rebase | `jj rebase -d <destination>` |
+| Rebase | `jj rebase --onto <destination>` |
 | Abandon commit | `jj abandon <id>` |
 | Undo last operation | `jj undo` |
+| Redo undone operation | `jj redo` |
+| Revert selected operation | `jj operation revert <operation-id>` |
+| Converge one divergent change | `jj converge --no-interactive -r 'change_id(<id>)'` |
 | Restore files | `jj restore [paths]` |
 | Create bookmark | `jj bookmark create <name>` |
+| Advance named bookmark | `jj bookmark advance exact:<name> --to <id>` |
 | Fetch remote | `jj git fetch` |
-| Push bookmark | `jj git push -b <name>` |
+| Preview bookmark push | `jj --no-pager git push --dry-run --remote exact:<remote> --bookmark exact:<name>` |
+| Push requested bookmark | `jj git push --remote exact:<remote> --bookmark exact:<name>` |
 | Add workspace | `jj workspace add <path>` |
 | List workspaces | `jj --no-pager workspace list` |
 | Remove workspace and directory | `jj workspace remove <name>` |

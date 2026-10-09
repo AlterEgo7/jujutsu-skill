@@ -4,22 +4,22 @@ An Agent Skill that helps AI coding agents work with the Jujutsu (jj) version co
 
 ## Overview
 
-This repository provides an Agent Skill for Claude Code and other compatible AI agents to effectively use the Jujutsu VCS. The skill teaches agents the proper workflow and commands for creating atomic, well-documented commits using jj.
+This repository provides an Agent Skill for Claude Code and other compatible AI agents to use the Jujutsu VCS. It covers non-interactive atomic commit refinement, scoped fetch/push, divergence and operation recovery, workspace management, and stack-wide checks.
 
 ## Compatibility
 
 **Target version:** jj v0.46.0
 
-Workspace management requires jj v0.46.0 or newer, including `jj workspace remove` to delete a workspace and its directory. jj v0.46.0 requires Git 2.42.0 or newer. Commands may differ in other versions.
+The documented workflows target jj v0.46.0, including child-workspace Git colocation and `jj workspace remove` to delete a workspace and its directory. jj v0.46.0 requires Git 2.42.0 or newer. Commands and defaults may differ in other versions; see the [official release notes](https://github.com/jj-vcs/jj/blob/v0.46.0/CHANGELOG.md).
 
 ## What is Jujutsu?
 
 Jujutsu (jj) is a Git-compatible version control system that offers several advantages:
 
-- **Working copy as a commit**: The working directory is always a commit, automatically snapshotting changes
+- **Working copy as a commit**: Most commands automatically snapshot on-disk changes; passive inspection can explicitly skip snapshotting
 - **No staging area**: Changes are moved directly between commits using `squash` and `split`
 - **Automatic rebasing**: Descendant commits are automatically rebased when parent commits change
-- **Mutable commits**: Commits can be freely edited, split, and squashed
+- **Mutable commits**: Mutable history can be edited, split, and squashed; trunk, tags, and other configured immutable history are protected
 - **Change IDs**: Stable identifiers that persist across commit rewrites
 - **Conflict handling**: Conflicts can be committed and resolved later
 
@@ -31,22 +31,22 @@ If you use [just](just.systems), you can run:
 just install
 ```
 
-Copy the `skill/` directory into your project's `.claude/skills/` directory:
+Copy the `jujutsu/` directory into your project's `.claude/skills/` directory:
 
 ```bash
-cp -r skill/ /path/to/your/project/.claude/skills/jj-vcs/
+cp -r jujutsu/ /path/to/your/project/.claude/skills/jujutsu/
 ```
 
 Or install it as a global skill:
 
 ```bash
-cp -r skill/ ~/.claude/skills/jj-vcs/
+cp -r jujutsu/ ~/.claude/skills/jujutsu/
 ```
 
 ## Skill Contents
 
 ```
-skill/
+jujutsu/
 └── SKILL.md    # Main skill file with jj workflow instructions
 ```
 
@@ -54,10 +54,12 @@ skill/
 
 The skill emphasizes:
 
-1. **Describe-first commits**: Use `jj desc -m "message"` before making changes
+1. **Describe-first commits**: Use `jj describe -m "message"` before making changes
 2. **Atomic commits**: Each commit should represent one logical change
 3. **Commit quality preservation**: Leverage jj's mutability to refine commits
-4. **Clean history**: Use `squash`, `split`, and `absorb` to maintain a readable history
+4. **Non-interactive refinement**: Use message-specified squashes and file-selected splits to maintain readable history
+5. **Scoped publishing and recovery**: Select intended bookmarks/remotes, preview pushes, respect immutability, and inspect operations before recovery
+6. **Stack verification**: Review patches oldest first and use `jj run --ignore-changes` for checks without rewriting commits
 
 ## Contributing
 
