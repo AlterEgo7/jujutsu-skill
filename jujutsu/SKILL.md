@@ -172,7 +172,7 @@ In `jj log`, each workspace's `@` appears as `<workspace-name>@`.
 
 ### Removing workspaces
 
-When asked to remove a workspace, use `jj workspace remove <name>` so its directory is deleted too. Run it from another workspace in the same repo. The main workspace cannot be removed.
+When asked to remove a workspace, use `jj workspace remove <name>` so its directory is deleted too. Run it from another workspace in the same repo. The main workspace cannot be removed. Stale workspaces can be removed directly; do not run `update-stale` in them first.
 
 Before removal, inspect `jj --no-pager workspace list` and `jj workspace root --name <name>` to confirm the target and record its path. Stop processes using that workspace and preserve any ignored files you need: tracked changes are snapshotted into a commit before removal, but ignored files are deleted without being saved.
 
